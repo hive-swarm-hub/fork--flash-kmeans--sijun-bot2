@@ -54,6 +54,7 @@ except Exception:  # pragma: no cover
 
 # -------------------- CUDA Graph cache --------------------
 _graph_cache = {}  # cache_key -> dict with graph and static tensors
+_graph_pool = None  # shared memory pool for all CUDA graphs
 
 class _GraphEntry:
     __slots__ = ('call_count', 'graph', 'static_centroids', 'centroids_alt',
@@ -170,10 +171,13 @@ def batch_kmeans_Euclid(
             else:
                 entry.sort_vals_buf = entry.sort_idx_buf = None
 
-            # Capture the graph
+            # Capture the graph (shared pool reduces memory fragmentation)
+            global _graph_pool
+            if _graph_pool is None:
+                _graph_pool = torch.cuda.graph_pool_handle()
             g = torch.cuda.CUDAGraph()
             entry.static_centroids.copy_(centroids, non_blocking=True)
-            with torch.cuda.graph(g):
+            with torch.cuda.graph(g, pool=_graph_pool):
                 _, final_buf = _run_euclid_loop(
                     x, entry.static_x_sq,
                     entry.static_centroids, entry.centroids_alt,
