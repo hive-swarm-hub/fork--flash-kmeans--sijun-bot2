@@ -74,10 +74,9 @@ def _run_euclid_loop(x, x_sq, centroids_src, centroids_dst, out, c_sq,
     for it in range(max_iters):
         src = buf[it % 2]
         dst = buf[(it + 1) % 2]
-        # Fused assign + histogram: hist_buf zeroed by previous finalize kernel (or pre-zeroed on first iter)
+        # Don't fuse histogram into assign (slower on our H100 due to atomic contention)
         cluster_ids = euclid_assign_triton(x, src, x_sq, out=out, c_sq=c_sq,
-                                           config=cached_config, use_heuristic=False,
-                                           hist_buf=hist_buf)
+                                           config=cached_config, use_heuristic=False)
         if use_atomic:
             triton_centroid_update_euclid(x, cluster_ids, src,
                                           centroid_sums=centroid_sums,
@@ -94,8 +93,7 @@ def _run_euclid_loop(x, x_sq, centroids_src, centroids_dst, out, c_sq,
                                                   sort_idx_buf=sort_idx_buf,
                                                   hist_buf=hist_buf,
                                                   offsets_buf=offsets_buf,
-                                                  centroids_out=dst,
-                                                  skip_histogram=True)
+                                                  centroids_out=dst)
     return out, buf[max_iters % 2]
 
 
@@ -235,8 +233,7 @@ def batch_kmeans_Euclid(
     for it in range(max_iters):
         # Use fused assign+histogram to warm up the hist kernel for graph capture
         cluster_ids = euclid_assign_triton(x, centroids, x_sq, out=out, c_sq=c_sq,
-                                           config=cached_config, use_heuristic=False,
-                                           hist_buf=hist_buf)
+                                           config=cached_config, use_heuristic=False)
         # Centroid update + fused c_sq for next iteration
         if use_atomic:
             centroids_new = triton_centroid_update_euclid(x, cluster_ids, centroids,
@@ -252,8 +249,7 @@ def batch_kmeans_Euclid(
                                                                   sort_vals_buf=sort_vals_buf,
                                                                   sort_idx_buf=sort_idx_buf,
                                                                   hist_buf=hist_buf,
-                                                                  offsets_buf=offsets_buf,
-                                                                  skip_histogram=True)
+                                                                  offsets_buf=offsets_buf)
 
         if check_convergence or verbose:
             center_shift = (centroids_new - centroids).norm(dim=-1).max()
